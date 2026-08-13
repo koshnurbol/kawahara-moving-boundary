@@ -71,7 +71,7 @@ def assemble(M, ng=14):
 
 
 def solve(M, T, alpha, gamma, alphap, gammap, u0, source=None,
-          Tfinal=1.0, ng=14):
+          Tfinal=1.0, ng=14, linearisation='extrapolated'):
     """Integrate the transformed Kawahara equation.
 
     Parameters
@@ -82,6 +82,22 @@ def solve(M, T, alpha, gamma, alphap, gammap, u0, source=None,
     u0        : callable u0(x), initial datum.
     source    : callable f(x,t) or None (unforced).
     Tfinal    : final time.
+    linearisation : how the advecting field in  u u_x  is treated.
+
+        'frozen'
+            u_m(.,t_n) is used, i.e. the advecting field is frozen at the
+            previous level.  Since  u(t_n) = u(t_{n+1/2}) - (dt/2) u_t + O(dt^2),
+            this introduces an O(dt) consistency error and the scheme is only
+            FIRST order in time, irrespective of the midpoint evaluation of the
+            remaining coefficients.
+
+        'extrapolated'   (default)
+            The advecting field is extrapolated to the midpoint,
+                u_hat^{n+1/2} = (3/2) u^n - (1/2) u^{n-1}      (n >= 1),
+            which is second-order accurate.  The first step is self-started by a
+            predictor-corrector pass (predict with u^0, correct with the average
+            of u^0 and the predictor), also second-order.  This restores the
+            genuine O(dt^2) temporal order claimed by the convergence theorem.
 
     Returns
     -------
@@ -89,6 +105,9 @@ def solve(M, T, alpha, gamma, alphap, gammap, u0, source=None,
     C    : (T+1, r) reduced coefficient vectors.
     asm  : the assembly dictionary (for reconstruction / energy).
     """
+    if linearisation not in ('frozen', 'extrapolated'):
+        raise ValueError("linearisation must be 'frozen' or 'extrapolated'")
+
     asm = assemble(M, ng)
     Z, V0, W, XN, Ct = asm['Z'], asm['V0'], asm['W'], asm['XN'], asm['Ct']
     Ar, S3r, S5r = asm['Ar'], asm['S3r'], asm['S5r']
@@ -105,15 +124,25 @@ def solve(M, T, alpha, gamma, alphap, gammap, u0, source=None,
             return 0.0
         return Z.T @ (V0 @ (W * source(XN, tm)))
 
-    for k in range(1, T + 1):
-        tm = 0.5 * (tt[k - 1] + tt[k])                       # midpoint
-        cf = Z @ C[k - 1]
-        Cr = Z.T @ np.tensordot(cf, Ct, axes=([0], [1])) @ Z  # frozen convection
+    def step(c_old, chat, tm, rhs_load):
+        """One Crank-Nicolson step with advecting field given by chat."""
+        Cr = Z.T @ np.tensordot(Z @ chat, Ct, axes=([0], [1])) @ Z
         Bconv = (alphap(tm) / gamma(tm)) * Bc1r + (gammap(tm) / gamma(tm)) * Bc2r
         b1, b2, b3 = 1 / gamma(tm), 1 / gamma(tm)**3, 1 / gamma(tm)**5
         Mr = -Bconv - b2 * S3r + b3 * S5r + b1 * Cr
-        rhs = (Ar - dt / 2 * Mr) @ C[k - 1] + dt * load(tm)
-        C[k] = np.linalg.solve(Ar + dt / 2 * Mr, rhs)
+        rhs = (Ar - dt / 2 * Mr) @ c_old + dt * rhs_load
+        return np.linalg.solve(Ar + dt / 2 * Mr, rhs)
+
+    for k in range(1, T + 1):
+        tm = 0.5 * (tt[k - 1] + tt[k])                       # midpoint
+        Fm = load(tm)
+        if linearisation == 'frozen':
+            C[k] = step(C[k - 1], C[k - 1], tm, Fm)
+        elif k == 1:
+            pred = step(C[0], C[0], tm, Fm)                  # predictor
+            C[k] = step(C[0], 0.5 * (C[0] + pred), tm, Fm)   # corrector
+        else:
+            C[k] = step(C[k - 1], 1.5 * C[k - 1] - 0.5 * C[k - 2], tm, Fm)
     return tt, C, asm
 
 

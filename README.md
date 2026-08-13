@@ -17,8 +17,11 @@ and the energy-decay experiment.
   `u_xx(1,t)` free (needed for the boundary dissipation) and avoids the order
   reduction caused by using only fully internal splines.
 - Crank–Nicolson with time-dependent coefficients and load evaluated at the
-  midpoint `t_{n+1/2}` (second order in time); the convective term is linearised
-  by freezing the advecting field at the previous level.
+  midpoint `t_{n+1/2}`; the convective term is linearised by **extrapolating**
+  the advecting field to the midpoint, `u_hat = 1.5 u^n - 0.5 u^{n-1}`
+  (first step: predictor–corrector).  Freezing the advecting field at `t_n`
+  instead — `solve(..., linearisation='frozen')` — reduces the scheme to FIRST
+  order in time; see `convergence.py`.
 - Observed accuracy in the `L^inf(0,T;L^2)` norm: **`O(h^3 + dt^2)`**. The
   third spatial order reflects the `H^2` (energy-norm) approximation rate of
   quartic B-splines controlled by the fifth-order operator.
@@ -29,7 +32,8 @@ and the energy-decay experiment.
 src/
   bsplines.py       quartic B-spline and its derivatives
   solver.py         assembly (constrained basis) + Crank–Nicolson time stepping
-  convergence.py    Method of Manufactured Solutions, Examples 1 & 2 (tables)
+  convergence.py    Method of Manufactured Solutions: spatial tables
+                    (Examples 1-4) and the temporal-order study
   moving_domain.py  reconstructed physical solution v_m(y,t), 3-D surfaces
   energy_decay.py   physical energy decay + asymptotic rate lambda_E
 figures/            generated PNGs
@@ -55,7 +59,7 @@ python energy_decay.py     # writes figures/energy_decay.png, prints lambda_E
 
 | Script             | Output                                            |
 |--------------------|---------------------------------------------------|
-| `convergence.py`   | Tables of Section 4.1 (Examples 1 and 2)          |
+| `convergence.py`   | Tables of Section 4.1 (Examples 1-4) + temporal    |
 | `moving_domain.py` | Figures 1–2 (unforced `v_m(y,t)`, Section 4.2)    |
 | `energy_decay.py`  | Figure 3 and the decay rate `lambda_E` (Sec. 4.3) |
 
@@ -63,9 +67,15 @@ python energy_decay.py     # writes figures/energy_decay.png, prints lambda_E
 
 - Convergence is measured in the discrete `L^inf(0,T;L^2)` norm; the observed
   order is `~3`, in agreement with the corrected convergence theorem.
-- In the energy-decay experiment the physical energy decreases monotonically;
-  the rate `lambda_E ~ 4` is read from the **exponential tail** (after a short
-  initial transient) and is essentially mesh-independent.
+- In the energy-decay experiment the decay must be measured on its intrinsic
+  time scale.  The boundary dissipation is `|u_xx(1,t)|^2/2 ~ 4e-4` while
+  `E(0) = 4.33e-8`, so the decay time is `~1e-4`, NOT `O(1)`: fitting a tail on
+  `t in [0.2,0.8]` fits round-off.  `energy_decay.py` integrates over
+  `t in [0,1e-3]` and returns `lambda_E = 1.12301e4`, identical to six
+  significant figures for `M = 40,60,80` and three time steps.
+- The boundary motion is exponentially relaxing, `alpha ~ -eps(1-e^{-sigma t})`,
+  so that the hypothesis of the decay theorem is actually satisfied; the
+  algebraic profile `-eps t/(t+1)` does not satisfy it.
 
 ## License
 
